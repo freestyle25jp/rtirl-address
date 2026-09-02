@@ -5,7 +5,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RTIRL Address Overlay</title>
-    <!-- Fonte -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
@@ -15,8 +14,7 @@
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 
     <style>
-        html,
-        body {
+        html, body {
             margin: 0;
             padding: 0;
             background: transparent;
@@ -46,7 +44,7 @@
 <body>
 
     <div id="address">
-        Carregando...
+        Aguardando GPS...
     </div>
 
 <script>
@@ -88,7 +86,7 @@ async function updateAddress(latitude, longitude) {
         const response = await fetch(url);
         const data = await response.json();
 
-        if (!data.features) return;
+        if (!data.features || data.features.length === 0) return;
 
         function findType(type) {
             return data.features.find(
@@ -128,7 +126,6 @@ async function updateAddress(latitude, longitude) {
         if (result) {
             addressElement.innerText = result;
             addressElement.classList.add("show");
-            console.log("Endereço atualizado:", result);
         }
     } catch (error) {
         console.error("Erro ao buscar endereço:", error);
@@ -137,12 +134,14 @@ async function updateAddress(latitude, longitude) {
     }
 }
 
-function handleLocation(location) {
-    if (!location) return;
-    const latitude = location.latitude;
-    const longitude = location.longitude;
+function handleLocation(data) {
+    if (!data) return;
 
-    if (latitude === undefined || longitude === undefined) return;
+    // Tenta extrair latitude e longitude cobrindo diferentes variações de nomes de chaves
+    const latitude = data.latitude !== undefined ? data.latitude : (data.lat !== undefined ? data.lat : null);
+    const longitude = data.longitude !== undefined ? data.longitude : (data.lng !== undefined ? data.lng : (data.lon !== undefined ? data.lon : null));
+
+    if (latitude === null || longitude === null) return;
 
     const now = Date.now();
 
@@ -158,7 +157,6 @@ function handleLocation(location) {
     const timePassed = now - lastGeocodeTime;
 
     if (distance >= MIN_DISTANCE_METERS && timePassed >= MIN_UPDATE_TIME) {
-        console.log("Movimento detectado:", Math.round(distance), "metros");
         lastLatitude = latitude;
         lastLongitude = longitude;
         lastGeocodeTime = now;
@@ -168,13 +166,13 @@ function handleLocation(location) {
 
 function start() {
     if (!pullKey) {
-        addressElement.innerText = "ERRO: Pull Key não encontrada";
+        addressElement.innerText = "ERRO: Pull Key ausente";
         addressElement.classList.add("show");
         return;
     }
 
     if (!mapboxToken) {
-        addressElement.innerText = "ERRO: Token Mapbox não encontrado";
+        addressElement.innerText = "ERRO: Token Mapbox ausente";
         addressElement.classList.add("show");
         return;
     }
@@ -186,17 +184,23 @@ function start() {
         appId: "1:684852107701:web:d77a8ed0ee5095279a61fc"
     };
 
-    // Inicialização corrigida sem nome customizado de app
     firebase.initializeApp(firebaseConfig);
 
     const database = firebase.database();
-    const locationRef = database.ref().child("pullables").child(pullKey).child("location");
+    
+    // Escuta diretamente o pullable inteiro para capturar qualquer formato de dados que o app envie
+    const pullableRef = database.ref().child("pullables").child(pullKey);
 
-    console.log("Aguardando localização...");
+    pullableRef.on("value", function(snapshot) {
+        const val = snapshot.val();
+        if (!val) return;
 
-    locationRef.on("value", function(snapshot) {
-        const location = snapshot.val();
-        handleLocation(location);
+        // Se os dados de localização estiverem em subpropriedades ou direto no objeto
+        if (val.location) {
+            handleLocation(val.location);
+        } else {
+            handleLocation(val);
+        }
     });
 }
 
