@@ -1,50 +1,182 @@
-function start() {
-    if (testLat && testLon) {
-        updateAddress(parseFloat(testLat), parseFloat(testLon));
-        return;
-    }
+<!DOCTYPE html>
+<html lang="pt-BR">
 
-    if (!pullKey) {
-        addressElement.innerText = "ERRO: Pull Key ausente";
-        return;
-    }
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTIRL Address Overlay - Nativo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
 
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #address {
+            color: white;
+            font-size: 30px;
+            font-family: 'Archivo Black', sans-serif;
+            font-weight: normal;
+            text-align: left;
+            white-space: nowrap;
+            text-shadow: 3px 3px 0px rgba(0,0,0,1);
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="address">
+        Obtendo GPS...
+    </div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const mapboxToken = params.get("token");
+const language = params.get("lang") || "pt";
+const addressElement = document.getElementById("address");
+
+const MIN_DISTANCE_METERS = 15;
+let lastLatitude = null;
+let lastLongitude = null;
+let geocoding = false;
+
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+async function updateAddress(latitude, longitude) {
+    if (geocoding || !mapboxToken) return;
+    geocoding = true;
+
+    try {
+        const url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
+            longitude + "," + latitude + ".json?access_token=" +
+            encodeURIComponent(mapboxToken) + "&language=" +
+            encodeURIComponent(language);
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (!data.features || data.features.length === 0) return;
+
+        function findType(type) {
+            return data.features.find(
+                feature => feature.place_type && feature.place_type.includes(type)
+            );
+        }
+
+        const address = findType("address");
+        const locality = findType("locality");
+        const neighborhood = findType("neighborhood");
+        const place = findType("place");
+        const district = findType("district");
+
+        let street = "";
+        if (address && address.text) {
+            street = address.text;
+        } else if (neighborhood && neighborhood.text) {
+            street = neighborhood.text;
+        }
+
+        let city = "";
+        if (locality && locality.text) {
+            city = locality.text;
+        } else if (place && place.text) {
+            city = place.text;
+        } else if (district && district.text) {
+            city = district.text;
+        }
+
+        let result = "";
+        if (street) result = street;
+        if (city) {
+            if (result) result += ", ";
+            result += city;
+        }
+
+        if (result) {
+            addressElement.innerText = result;
+        }
+    } catch (error) {
+        console.error("Erro no Mapbox:", error);
+    } finally {
+        geocoding = false;
+    }
+}
+
+function startGeolocation() {
     if (!mapboxToken) {
         addressElement.innerText = "ERRO: Token Mapbox ausente";
         return;
     }
 
-    const firebaseConfig = {
-        apiKey: "AIzaSyC4L8ICZbJDufxe8bimRdB5cAulPCaYVQQ",
-        databaseURL: "https://rtirl-a1d7f-default-rtdb.firebaseio.com",
-        projectId: "rtirl-a1d7f",
-        appId: "1:684852107701:web:d77a8ed0ee5095279a61fc"
-    };
+    if (!('geolocation' in navigator)) {
+        addressElement.innerText = "GPS não suportado";
+        return;
+    }
 
-    firebase.initializeApp(firebaseConfig);
-    const database = firebase.database();
+    navigator.geolocation.watchPosition(
+        (position) => {
+            const latitude = position.coords.latitude;
+            const longitude = position.coords.longitude;
 
-    // MUDANÇA: Vamos escutar a raiz da chave e inspecionar o que o IRL Pro envia
-    const pullableRef = database.ref().child(pullKey); // ou tente .ref() direto se necessário
+            if (lastLatitude === null || lastLongitude === null) {
+                lastLatitude = latitude;
+                lastLongitude = longitude;
+                updateAddress(latitude, longitude);
+                return;
+            }
 
-    addressElement.innerText = "Inspecionando dados...";
+            const distance = getDistanceMeters(lastLatitude, lastLongitude, latitude, longitude);
 
-    pullableRef.on("value", function(snapshot) {
-        const val = snapshot.val();
-        console.log("DADOS RECEBIDOS DO FIREBASE:", val); // Olhe o F12 (Console) do navegador!
-        
-        if (!val) {
-            addressElement.innerText = "Chave vazia no Firebase";
-            return;
+            // Atualiza se andar mais de 15 metros
+            if (distance >= MIN_DISTANCE_METERS) {
+                lastLatitude = latitude;
+                lastLongitude = longitude;
+                updateAddress(latitude, longitude);
+            }
+        },
+        (error) => {
+            console.error("Erro de GPS:", error);
+            addressElement.innerText = "Erro ao obter GPS: " + error.message;
+        },
+        {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 10000
         }
-
-        // Se o app joga a localização direto ou dentro de subpropriedades
-        if (val.location) {
-            handleLocation(val.location);
-        } else if (val.lat || val.latitude) {
-            handleLocation(val);
-        } else {
-            addressElement.innerText = "Estrutura diferente (Veja o Console)";
-        }
-    });
+    );
 }
+
+start(); // Mantém compatibilidade caso teste via URL
+function start() {
+    const testLat = params.get("testlat");
+    const testLon = params.get("testlon");
+
+    if (testLat && testLon) {
+        updateAddress(parseFloat(testLat), parseFloat(testLon));
+        return;
+    }
+
+    startGeolocation();
+}
+</script>
+
+</body>
+</html>
