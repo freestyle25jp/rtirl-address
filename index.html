@@ -154,7 +154,11 @@ function startGeolocation() {
         },
         (error) => {
             console.error("Erro de GPS:", error);
-            addressElement.innerText = "Erro ao obter GPS: " + error.message;
+            if (error.code === 1) {
+                addressElement.innerText = "Permissão de GPS negada pelo app";
+            } else {
+                addressElement.innerText = "Aguardando sinal de GPS...";
+            }
         },
         {
             enableHighAccuracy: true,
