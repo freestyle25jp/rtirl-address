@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0">
+
+    <title>RTIRL Address Overlay</title>
+
+    <!-- Fonte -->
+    <link rel="preconnect"
+        href="https://fonts.googleapis.com">
+
+    <link rel="preconnect"
+        href="https://fonts.gstatic.com"
+        crossorigin>
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap"
+        rel="stylesheet">
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase.js"></script>
+
+
+    <style>
+
+        html,
+        body {
+
+            margin: 0;
+            padding: 0;
+
+            background: transparent;
+
+            width: 100%;
+            height: 100%;
+
+            overflow: hidden;
+
+        }
+
+
+        #address {
+
+            color: white;
+
+            font-size: 30px;
+
+            font-family:
+                'Archivo Black',
+                sans-serif;
+
+            font-weight: normal;
+
+            text-align: left;
+
+            white-space: nowrap;
+
+            -webkit-text-stroke:
+                0px white;
+
+            text-shadow:
+                3px 3px 0px
+                rgba(0,0,0,1);
+
+            opacity: 0;
+
+            transition:
+                opacity 0.3s ease;
+
+        }
+
+
+        #address.show {
+
+            opacity: 1;
+
+        }
+
+    </style>
+
+</head>
+
+
+<body>
+
+
+    <div id="address">
+        Carregando...
+    </div>
+
+
+
+<script>
+
+
+/* =========================================
+   CONFIGURAÇÃO
+========================================= */
+
+
+/*
+A Pull Key será passada pela URL.
+
+Exemplo:
+
+?key=SUA_PULL_KEY
+
+*/
+
+
+/*
+O token do Mapbox também será
+passado pela URL.
+
+Exemplo:
+
+&token=SEU_TOKEN_MAPBOX
+
+*/
+
+
+const params = new URLSearchParams(
+    window.location.search
+);
+
+
+const pullKey = params.get("key");
+
+
+const mapboxToken = params.get("token");
+
+
+const language =
+    params.get("lang") || "pt";
+
+
+const addressElement =
+    document.getElementById("address");
+
+
+
+/* =========================================
+   CONFIGURAÇÕES DE ATUALIZAÇÃO
+========================================= */
+
+
+/*
+
+Distância mínima para consultar
+um novo endereço.
+
+100 metros.
+
+*/
+
+
+const MIN_DISTANCE_METERS = 100;
+
+
+/*
+
+Tempo mínimo entre consultas.
+
+8 segundos.
+
+*/
+
+
+const MIN_UPDATE_TIME = 8000;
+
+
+
+/* =========================================
+   VARIÁVEIS
+========================================= */
+
+
+let lastLatitude = null;
+
+let lastLongitude = null;
+
+let lastGeocodeTime = 0;
+
+let geocoding = false;
+
+
+
+/* =========================================
+   FUNÇÃO DISTÂNCIA GPS
+========================================= */
+
+
+function getDistanceMeters(
+    lat1,
+    lon1,
+    lat2,
+    lon2
+) {
+
+    const R = 6371000;
+
+
+    const dLat =
+        (lat2 - lat1)
+        * Math.PI / 180;
+
+
+    const dLon =
+        (lon2 - lon1)
+        * Math.PI / 180;
+
+
+    const a =
+
+        Math.sin(dLat / 2)
+        *
+        Math.sin(dLat / 2)
+
+        +
+
+        Math.cos(
+            lat1 * Math.PI / 180
+        )
+
+        *
+
+        Math.cos(
+            lat2 * Math.PI / 180
+        )
+
+        *
+
+        Math.sin(dLon / 2)
+        *
+        Math.sin(dLon / 2);
+
+
+    const c =
+
+        2 *
+
+        Math.atan2(
+            Math.sqrt(a),
+            Math.sqrt(1 - a)
+        );
+
+
+    return R * c;
+
+}
+
+
+
+/* =========================================
+   MAPBOX REVERSE GEOCODING
+========================================= */
+
+
+async function updateAddress(
+    latitude,
+    longitude
+) {
+
+
+    if (geocoding) {
+
+        return;
+
+    }
+
+
+    geocoding = true;
+
+
+    try {
+
+
+        const url =
+
+            "https://api.mapbox.com/geocoding/v5/mapbox.places/"
+
+            +
+
+            longitude
+
+            +
+
+            ","
+
+            +
+
+            latitude
+
+            +
+
+            ".json"
+
+            +
+
+            "?access_token="
+
+            +
+
+            encodeURIComponent(
+                mapboxToken
+            )
+
+            +
+
+            "&language="
+
+            +
+
+            encodeURIComponent(
+                language
+            );
+
+
+        const response =
+            await fetch(url);
+
+
+        const data =
+            await response.json();
+
+
+
+        if (!data.features) {
+
+            return;
+
+        }
+
+
+
+        /* ===============================
+           PROCURA TIPOS DE LOCALIZAÇÃO
+        =============================== */
+
+
+        function findType(type) {
+
+            return data.features.find(
+
+                feature =>
+
+                    feature.place_type
+
+                    &&
+
+                    feature.place_type.includes(
+                        type
+                    )
+
+            );
+
+        }
+
+
+
+        const address =
+            findType("address");
+
+
+        const locality =
+            findType("locality");
+
+
+        const neighborhood =
+            findType("neighborhood");
+
+
+        const place =
+            findType("place");
+
+
+        const district =
+            findType("district");
+
+
+
+        /* ===============================
+           DEFINE A RUA
+        =============================== */
+
+
+        let street = "";
+
+
+        if (address && address.text) {
+
+            street =
+                address.text;
+
+        }
+
+
+        else if (
+            neighborhood
+            &&
+            neighborhood.text
+        ) {
+
+            street =
+                neighborhood.text;
+
+        }
+
+
+
+        /* ===============================
+           DEFINE A CIDADE / LOCALIDADE
+        =============================== */
+
+
+        let city = "";
+
+
+        if (
+            locality
+            &&
+            locality.text
+        ) {
+
+            city =
+                locality.text;
+
+        }
+
+
+        else if (
+            place
+            &&
+            place.text
+        ) {
+
+            city =
+                place.text;
+
+        }
+
+
+        else if (
+            district
+            &&
+            district.text
+        ) {
+
+            city =
+                district.text;
+
+        }
+
+
+
+        /* ===============================
+           MONTA O TEXTO
+        =============================== */
+
+
+        let result = "";
+
+
+        if (street) {
+
+            result =
+                street;
+
+        }
+
+
+        if (city) {
+
+
+            if (result) {
+
+                result += ", ";
+
+            }
+
+
+            result += city;
+
+        }
+
+
+
+        /* ===============================
+           ATUALIZA TELA
+        =============================== */
+
+
+        if (result) {
+
+
+            addressElement.innerText =
+                result;
+
+
+            addressElement.classList.add(
+                "show"
+            );
+
+
+            console.log(
+                "Endereço atualizado:",
+                result
+            );
+
+        }
+
+
+
+    }
+
+
+    catch (error) {
+
+
+        console.error(
+            "Erro ao buscar endereço:",
+            error
+        );
+
+
+    }
+
+
+    finally {
+
+
+        geocoding = false;
+
+
+    }
+
+}
+
+
+
+/* =========================================
+   RECEBE LOCALIZAÇÃO
+========================================= */
+
+
+function handleLocation(
+    location
+) {
+
+
+    if (!location) {
+
+        return;
+
+    }
+
+
+    const latitude =
+        location.latitude;
+
+
+    const longitude =
+        location.longitude;
+
+
+
+    if (
+
+        latitude === undefined
+
+        ||
+
+        longitude === undefined
+
+    ) {
+
+        return;
+
+    }
+
+
+
+    const now =
+        Date.now();
+
+
+
+    /* ===============================
+       PRIMEIRA LOCALIZAÇÃO
+    =============================== */
+
+
+    if (
+
+        lastLatitude === null
+
+        ||
+
+        lastLongitude === null
+
+    ) {
+
+
+        lastLatitude =
+            latitude;
+
+
+        lastLongitude =
+            longitude;
+
+
+        lastGeocodeTime =
+            now;
+
+
+        updateAddress(
+            latitude,
+            longitude
+        );
+
+
+        return;
+
+    }
+
+
+
+    /* ===============================
+       CALCULA DISTÂNCIA
+    =============================== */
+
+
+    const distance =
+
+        getDistanceMeters(
+
+            lastLatitude,
+            lastLongitude,
+
+            latitude,
+            longitude
+
+        );
+
+
+
+    const timePassed =
+
+        now -
+
+        lastGeocodeTime;
+
+
+
+    /* ===============================
+       DECIDE SE ATUALIZA
+    =============================== */
+
+
+    if (
+
+        distance >=
+        MIN_DISTANCE_METERS
+
+        &&
+
+        timePassed >=
+        MIN_UPDATE_TIME
+
+    ) {
+
+
+        console.log(
+
+            "Movimento detectado:",
+
+            Math.round(
+                distance
+            ),
+
+            "metros"
+
+        );
+
+
+
+        lastLatitude =
+            latitude;
+
+
+        lastLongitude =
+            longitude;
+
+
+        lastGeocodeTime =
+            now;
+
+
+
+        updateAddress(
+
+            latitude,
+            longitude
+
+        );
+
+
+    }
+
+
+}
+
+
+
+/* =========================================
+   INICIA FIREBASE
+========================================= */
+
+
+function start() {
+
+
+    if (!pullKey) {
+
+
+        addressElement.innerText =
+            "ERRO: Pull Key não encontrada";
+
+
+        addressElement.classList.add(
+            "show"
+        );
+
+
+        return;
+
+    }
+
+
+
+    if (!mapboxToken) {
+
+
+        addressElement.innerText =
+            "ERRO: Token Mapbox não encontrado";
+
+
+        addressElement.classList.add(
+            "show"
+        );
+
+
+        return;
+
+    }
+
+
+
+    firebase.database.INTERNAL
+        .forceWebSockets();
+
+
+
+    const firebaseConfig = {
+
+
+        apiKey:
+            "AIzaSyC4L8ICZbJDufxe8bimRdB5cAulPCaYVQQ",
+
+
+        databaseURL:
+            "https://rtirl-a1d7f-default-rtdb.firebaseio.com",
+
+
+        projectId:
+            "rtirl-a1d7f",
+
+
+        appId:
+            "1:684852107701:web:d77a8ed0ee5095279a61fc"
+
+
+    };
+
+
+
+    firebase.initializeApp(
+
+        firebaseConfig,
+
+        "rtirl-address-overlay"
+
+    );
+
+
+
+    const database =
+        firebase.database();
+
+
+
+    const locationRef =
+
+        database
+
+        .ref()
+
+        .child("pullables")
+
+        .child(pullKey)
+
+        .child("location");
+
+
+
+    console.log(
+        "Aguardando localização..."
+    );
+
+
+
+    locationRef.on(
+
+        "value",
+
+        function(snapshot) {
+
+
+            const location =
+                snapshot.val();
+
+
+
+            handleLocation(
+                location
+            );
+
+
+        }
+
+    );
+
+
+
+}
+
+
+
+/* =========================================
+   START
+========================================= */
+
+
+start();
+
+
+</script>
+
+
+</body>
+
+</html>
