@@ -1,180 +1,5 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RTIRL Address Overlay</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=swap" rel="stylesheet">
-
-    <!-- Firebase v8 SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-
-    <style>
-        html, body {
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-        }
-
-        #address {
-            color: white;
-            font-size: 30px;
-            font-family: 'Archivo Black', sans-serif;
-            font-weight: normal;
-            text-align: left;
-            white-space: nowrap;
-            text-shadow: 3px 3px 0px rgba(0,0,0,1);
-            /* Removido o opacity: 0 para garantir que apareça desde o primeiro segundo */
-            display: block;
-        }
-    </style>
-</head>
-
-<body>
-
-    <div id="address">
-        Iniciando...
-    </div>
-
-<script>
-const params = new URLSearchParams(window.location.search);
-const pullKey = params.get("key");
-const mapboxToken = params.get("token");
-const language = params.get("lang") || "pt";
-const addressElement = document.getElementById("address");
-
-// SUPORTE A TESTE MANUAL PELA URL
-const testLat = params.get("testlat");
-const testLon = params.get("testlon");
-
-const MIN_DISTANCE_METERS = 15;
-const MIN_UPDATE_TIME = 3000;
-
-let lastLatitude = null;
-let lastLongitude = null;
-let lastGeocodeTime = 0;
-let geocoding = false;
-
-function getDistanceMeters(lat1, lon1, lat2, lon2) {
-    const R = 6371000;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-}
-
-async function updateAddress(latitude, longitude) {
-    if (geocoding) return;
-    geocoding = true;
-
-    try {
-        addressElement.innerText = "Buscando endereço...";
-
-        const url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
-            longitude + "," + latitude + ".json?access_token=" +
-            encodeURIComponent(mapboxToken) + "&language=" +
-            encodeURIComponent(language);
-
-        const response = await fetch(url);
-        const data = await response.json();
-
-        if (!data.features || data.features.length === 0) {
-            addressElement.innerText = "Endereço não encontrado";
-            return;
-        }
-
-        function findType(type) {
-            return data.features.find(
-                feature => feature.place_type && feature.place_type.includes(type)
-            );
-        }
-
-        const address = findType("address");
-        const locality = findType("locality");
-        const neighborhood = findType("neighborhood");
-        const place = findType("place");
-        const district = findType("district");
-
-        let street = "";
-        if (address && address.text) {
-            street = address.text;
-        } else if (neighborhood && neighborhood.text) {
-            street = neighborhood.text;
-        }
-
-        let city = "";
-        if (locality && locality.text) {
-            city = locality.text;
-        } else if (place && place.text) {
-            city = place.text;
-        } else if (district && district.text) {
-            city = district.text;
-        }
-
-        let result = "";
-        if (street) result = street;
-        if (city) {
-            if (result) result += ", ";
-            result += city;
-        }
-
-        if (result) {
-            addressElement.innerText = result;
-            console.log("Endereço atualizado:", result);
-        } else {
-            addressElement.innerText = latitude.toFixed(4) + ", " + longitude.toFixed(4);
-        }
-    } catch (error) {
-        console.error("Erro ao buscar endereço:", error);
-        addressElement.innerText = "Erro na API Mapbox";
-    } finally {
-        geocoding = false;
-    }
-}
-
-function handleLocation(data) {
-    if (!data) return;
-
-    const latitude = data.latitude !== undefined ? data.latitude : (data.lat !== undefined ? data.lat : null);
-    const longitude = data.longitude !== undefined ? data.longitude : (data.lng !== undefined ? data.lng : (data.lon !== undefined ? data.lon : null));
-
-    if (latitude === null || longitude === null) return;
-
-    const now = Date.now();
-
-    if (lastLatitude === null || lastLongitude === null) {
-        lastLatitude = latitude;
-        lastLongitude = longitude;
-        lastGeocodeTime = now;
-        updateAddress(latitude, longitude);
-        return;
-    }
-
-    const distance = getDistanceMeters(lastLatitude, lastLongitude, latitude, longitude);
-    const timePassed = now - lastGeocodeTime;
-
-    if (distance >= MIN_DISTANCE_METERS && timePassed >= MIN_UPDATE_TIME) {
-        lastLatitude = latitude;
-        lastLongitude = longitude;
-        lastGeocodeTime = now;
-        updateAddress(latitude, longitude);
-    }
-}
-
 function start() {
-    // Se o usuário passou coordenadas de teste direto na URL, executa na hora!
     if (testLat && testLon) {
-        addressElement.innerText = "Testando coordenadas...";
         updateAddress(parseFloat(testLat), parseFloat(testLon));
         return;
     }
@@ -198,27 +23,28 @@ function start() {
 
     firebase.initializeApp(firebaseConfig);
     const database = firebase.database();
-    const pullableRef = database.ref().child("pullables").child(pullKey);
 
-    addressElement.innerText = "Conectado ao Firebase...";
+    // MUDANÇA: Vamos escutar a raiz da chave e inspecionar o que o IRL Pro envia
+    const pullableRef = database.ref().child(pullKey); // ou tente .ref() direto se necessário
+
+    addressElement.innerText = "Inspecionando dados...";
 
     pullableRef.on("value", function(snapshot) {
         const val = snapshot.val();
+        console.log("DADOS RECEBIDOS DO FIREBASE:", val); // Olhe o F12 (Console) do navegador!
+        
         if (!val) {
-            addressElement.innerText = "Aguardando dados da chave...";
+            addressElement.innerText = "Chave vazia no Firebase";
             return;
         }
 
+        // Se o app joga a localização direto ou dentro de subpropriedades
         if (val.location) {
             handleLocation(val.location);
-        } else {
+        } else if (val.lat || val.latitude) {
             handleLocation(val);
+        } else {
+            addressElement.innerText = "Estrutura diferente (Veja o Console)";
         }
     });
 }
-
-start();
-</script>
-
-</body>
-</html>
